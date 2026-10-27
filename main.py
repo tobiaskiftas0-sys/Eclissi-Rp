@@ -1,138 +1,120 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import os
-from dotenv import load_dotenv
+from datetime import datetime
 
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
-
-print(f"DEBUG Token trovato: {TOKEN is not None}") # per vedere se lo legge
-
-intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---------- MODAL CON DOMANDE ----------
+STAFF_ROLE_NAME = "Staff"
 
-class CittadinanzaModal(discord.ui.Modal, title="Richiesta Cittadinanza"):
-    nome_ic = discord.ui.TextInput(label="Nome e Cognome IC", placeholder="Es. Luca Bianchi")
-    data_nascita = discord.ui.TextInput(label="Data di nascita e Luogo IC", placeholder="Es. 01/01/2000 Hamburg")
-    lavoro = discord.ui.TextInput(label="Che lavoro vuoi fare a Hamburg?", placeholder="Polizia, Medico, Meccanico...", style=discord.TextStyle.paragraph)
-    background = discord.ui.TextInput(label="Breve storia del tuo PG (Background)", style=discord.TextStyle.paragraph, required=False)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="📄 Nuova Richiesta Cittadinanza", color=0x00ff00)
-        embed.add_field(name="Utente Discord", value=interaction.user.mention, inline=False)
-        embed.add_field(name="Nome IC", value=self.nome_ic.value, inline=True)
-        embed.add_field(name="Nascita IC", value=self.data_nascita.value, inline=True)
-        embed.add_field(name="Lavoro Desiderato", value=self.lavoro.value, inline=False)
-        embed.add_field(name="Background", value=self.background.value or "Non specificato", inline=False)
-        embed.set_footer(text=f"ID: {interaction.user.id}")
-        await interaction.channel.send(embed=embed, view=ApprovazioneView())
-        await interaction.response.send_message("✅ Richiesta di cittadinanza inviata! Attendi la risposta dello staff.", ephemeral=True)
-
-class PortoArmiModal(discord.ui.Modal, title="Richiesta Porto d'Armi"):
-    nome_ic = discord.ui.TextInput(label="Nome e Cognome IC", placeholder="Es. Luca Bianchi")
-    fedina = discord.ui.TextInput(label="Hai precedenti penali? (SI/NO)", placeholder="Se SI, quali?")
-    tipo_arma = discord.ui.TextInput(label="Che tipo di arma vuoi? (Leggera/Pesante)", placeholder="Es. Pistola leggera")
-    motivo = discord.ui.TextInput(label="Perchè vuoi il porto d'armi? (Motivo RP)", style=discord.TextStyle.paragraph, placeholder="Es. Mi serve per difesa personale...")
-
-    async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="🔫 Nuova Richiesta Porto d'Armi", color=0xffa500)
-        embed.add_field(name="Utente Discord", value=interaction.user.mention, inline=False)
-        embed.add_field(name="Nome IC", value=self.nome_ic.value, inline=True)
-        embed.add_field(name="Fedina Penale", value=self.fedina.value, inline=True)
-        embed.add_field(name="Tipo Arma", value=self.tipo_arma.value, inline=True)
-        embed.add_field(name="Motivo RP", value=self.motivo.value, inline=False)
-        embed.set_footer(text=f"ID: {interaction.user.id}")
-        await interaction.channel.send(embed=embed, view=ApprovazioneView())
-        await interaction.response.send_message("✅ Richiesta porto d'armi inviata alla Polizia!", ephemeral=True)
-
-# ---------- VIEW CON BOTTONI ----------
-
-class ApprovazioneView(discord.ui.View):
+# --- TICKET SYSTEM ---
+class TicketSelect(discord.ui.Select):
     def __init__(self):
-        super().__init__(timeout=None)
-    @discord.ui.button(label="✅ Approva", style=discord.ButtonStyle.green, custom_id="approva")
-    async def approva(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(f"Richiesta approvata da {interaction.user.mention} ✅")
-    @discord.ui.button(label="❌ Rifiuta", style=discord.ButtonStyle.red, custom_id="rifiuta")
-    async def rifiuta(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(f"Richiesta rifiutata da {interaction.user.mention} ❌")
+        options = [
+            discord.SelectOption(label="Supporto Generale", emoji="🛠️", description="Info, domande generiche"),
+            discord.SelectOption(label="Supporto In-Game", emoji="🎮", description="Problemi in città, item, veicoli"),
+            discord.SelectOption(label="Segnalazione Bug", emoji="🐛", description="Segnala bug con prove"),
+            discord.SelectOption(label="Richiesta Fondazione", emoji="🏢", description="Fondare azienda/gang/org"),
+            discord.SelectOption(label="Richiesta Gradi Alti", emoji="⭐", description="Gradi alti LSPD/EMS/Meccanici"),
+            discord.SelectOption(label="Porto d'Armi", emoji="🔫", description="Richiesta porto d'armi"),
+        ]
+        super().__init__(placeholder="📩 Seleziona motivo ticket...", options=options, custom_id="ticket_final_v4")
 
-class CittadinanzaView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-    @discord.ui.button(label="📄 Richiedi Cittadinanza", style=discord.ButtonStyle.green, custom_id="btn_cittadinanza")
-    async def cittadinanza_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(CittadinanzaModal())
+    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        user = interaction.user
+        label = self.values[0]
 
-class PortoArmiView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-    @discord.ui.button(label="🔫 Richiedi Porto d'Armi", style=discord.ButtonStyle.blurple, custom_id="btn_porto")
-    async def porto_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(PortoArmiModal())
+        for ch in guild.text_channels:
+            if ch.topic and str(user.id) in ch.topic:
+                await interaction.response.send_message(f"Hai già un ticket: {ch.mention}", ephemeral=True)
+                return
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            user: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True),
+            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        }
+        staff_role = discord.utils.get(guild.roles, name=STAFF_ROLE_NAME)
+        if staff_role:
+            overwrites[staff_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+        channel = await guild.create_text_channel(f"ticket-{user.name}", overwrites=overwrites, topic=f"{user.id} | {label}")
+        
+        embed = discord.Embed(title=f"🎫 {label}", description=f"{user.mention} Descrivi il problema con prove.\n**Tipo:** {label}", color=0x5865F2)
+        ping = staff_role.mention if staff_role else "@Staff"
+        await channel.send(content=f"{ping} Nuovo ticket {label} - {user.mention}", embed=embed, view=CloseView())
+        await interaction.response.send_message(f"Ticket creato: {channel.mention} ✅", ephemeral=True)
 
 class TicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-    @discord.ui.button(label="🎫 Apri Ticket RP - IA", style=discord.ButtonStyle.green, custom_id="ticket_rp")
-    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        overwrites = {
-            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True)
-        }
-        channel = await interaction.guild.create_text_channel(f"ticket-{interaction.user.name}", overwrites=overwrites)
-        embed = discord.Embed(title="Ticket RP - IA Intelligente", description=f"Ciao {interaction.user.mention}, sono l'IA di Emergency Hamburg.\nSpiega il tuo problema in RP.", color=0x2b2d31)
-        await channel.send(embed=embed)
-        await interaction.response.send_message(f"Ticket aperto: {channel.mention}", ephemeral=True)
+        self.add_item(TicketSelect())
 
-# ---------- COMANDI SLASH / ----------
+class CloseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    @discord.ui.button(label="🔒 Chiudi Ticket", style=discord.ButtonStyle.red, custom_id="close_final_v4")
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.channel.delete(reason=f"Chiuso da {interaction.user}")
+
+# --- COMANDI ---
+@bot.tree.command(name="ticket", description="Pannellone ticket Eclissi")
+@commands.has_permissions(administrator=True)
+async def ticket_panel(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🎫 ECLISSI RP - ASSISTENZA",
+        description="**Hai bisogno di aiuto? Seleziona dal menu:**\n\n🛠️ Supporto Generale\n🎮 Supporto In-Game\n🐛 Segnalazione Bug\n🏢 Richiesta Fondazione\n⭐ Richiesta Gradi Alti\n🔫 Porto d'Armi\n\n👇 Seleziona per aprire",
+        color=0x2b2d31
+    )
+    if interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+    await interaction.channel.send(embed=embed, view=TicketView())
+    await interaction.response.send_message("Inviato ✅", ephemeral=True)
+
+@bot.tree.command(name="ssu", description="SSU lungo")
+async def ssu(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🟢 ECLISSI RP - SERVER APERTO [SSU]",
+        description="**@everyone LA CITTÀ È APERTA!**\n\n📥 **F8:** Eclissi RP\n📜 Leggi regolamento in #regolamento\n📍 Cittadinanza in Comune\n💼 Lavoro al Centro Impiego\n\n**RP serio - No RDM/VDM/Meta**\nStaff online!\nBuon RP!",
+        color=0x00ff00
+    )
+    await interaction.response.send_message(content="@everyone", embed=embed)
+
+@bot.tree.command(name="ssd", description="SSD lungo")
+async def ssd(interaction: discord.Interaction, motivo: str = "Riavvio / Manutenzione"):
+    embed = discord.Embed(
+        title="🔴 ECLISSI RP - SERVER CHIUSO [SSD]",
+        description=f"**@everyone SERVER CHIUSO**\n\n**Motivo:** {motivo}\n\n• Dati salvati\n• Non entrare\n• Resta in Discord per prossimo SSU\n\n**- Staff Eclissi RP**",
+        color=0xff0000
+    )
+    await interaction.response.send_message(content="@everyone", embed=embed)
+
+@bot.tree.command(name="portodarmi", description="Annuncio porto d'armi")
+async def portodarmi(interaction: discord.Interaction, stato: str):
+    color = 0x00ff00 if "apert" in stato.lower() else 0xff0000
+    embed = discord.Embed(
+        title=f"🔫 PORTO D'ARMI {stato.upper()}",
+        description=f"**@everyone PORTO D'ARMI {stato.upper()}**\n\n📍 Armeria / Commissariato\n💰 $15.000\n📋 Requisiti: Cittadinanza + Fedina Pulita\n\nRecati in armeria ORA se APERTO!",
+        color=color
+    )
+    await interaction.response.send_message(content="@everyone", embed=embed)
+
+@bot.tree.command(name="annuncio", description="Annuncio lungo custom")
+async def annuncio(interaction: discord.Interaction, titolo: str, descrizione: str):
+    embed = discord.Embed(title=f"📢 {titolo.upper()}", description=descrizione, color=0x2b2d31, timestamp=datetime.now())
+    embed.set_footer(text=f"Di {interaction.user.display_name}")
+    await interaction.response.send_message(content="@everyone", embed=embed)
 
 @bot.event
 async def on_ready():
+    print(f"ONLINE {bot.user}")
+    bot.add_view(TicketView())
+    bot.add_view(CloseView())
     await bot.tree.sync()
-    print(f"Bot online {bot.user}")
 
-@bot.tree.command(name="setup_cittadinanza", description="Crea pannello con bottone cittadinanza")
-async def setup_cittadinanza(interaction: discord.Interaction):
-    embed = discord.Embed(title="📄 CITTADINANZA - Emergency Hamburg", description="Vuoi diventare cittadino di Hamburg?\nClicca il bottone qui sotto e compila il modulo con le domande RP!", color=0x00ff00)
-    await interaction.channel.send(embed=embed, view=CittadinanzaView())
-    await interaction.response.send_message("Pannello cittadinanza creato!", ephemeral=True)
-
-@bot.tree.command(name="setup_porto_armi", description="Crea pannello con bottone porto d'armi")
-async def setup_porto_armi(interaction: discord.Interaction):
-    embed = discord.Embed(title="🔫 PORTO D'ARMI - Polizia Hamburg", description="Vuoi richiedere il porto d'armi?\nClicca il bottone e rispondi alle domande per la richiesta!", color=0xffa500)
-    await interaction.channel.send(embed=embed, view=PortoArmiView())
-    await interaction.response.send_message("Pannello porto d'armi creato!", ephemeral=True)
-
-@bot.tree.command(name="setup_ticket", description="Crea pannello ticket IA")
-async def setup_ticket(interaction: discord.Interaction):
-    embed = discord.Embed(title="🚨 Supporto Emergency Hamburg RP", description="Apri un ticket, l'IA RP ti aiuta", color=0x2b2d31)
-    await interaction.channel.send(embed=embed, view=TicketView())
-    await interaction.response.send_message("Pannello ticket creato!", ephemeral=True)
-
-@bot.tree.command(name="annuncio", description="Fai un annuncio ufficiale")
-async def annuncio(interaction: discord.Interaction, titolo: str, descrizione: str):
-    embed = discord.Embed(title=f"📢 {titolo}", description=descrizione, color=0xff0000)
-    embed.set_footer(text=f"Annuncio di {interaction.user.name}")
-    await interaction.channel.send(content="@everyone", embed=embed)
-    await interaction.response.send_message("Annuncio inviato!", ephemeral=True)
-
-@bot.tree.command(name="bando_staff", description="Bando staff Emergency Hamburg")
-async def bando_staff(interaction: discord.Interaction):
-    await interaction.response.send_modal(BandoStaffModal())
-
-# Bando modal veloce
-class BandoStaffModal(discord.ui.Modal, title="Bando Staff"):
-    nome = discord.ui.TextInput(label="Nome IC / Età")
-    exp = discord.ui.TextInput(label="Esperienza RP", style=discord.TextStyle.paragraph)
-    perche = discord.ui.TextInput(label="Perchè staff?", style=discord.TextStyle.paragraph)
-    async def on_submit(self, interaction: discord.Interaction):
-        e = discord.Embed(title="BANDO STAFF", color=0xff0000)
-        e.description = f"**Utente:** {interaction.user.mention}\n**Nome:** {self.nome.value}\n**Exp:** {self.exp.value}\n**Motivo:** {self.perche.value}"
-        await interaction.channel.send(embed=e)
-        await interaction.response.send_message("Inviato!", ephemeral=True)
-
-bot.run(TOKEN)
+bot.run(os.getenv("TOKEN"))
